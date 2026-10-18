@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "minimum": { "sillytavern": "1.18.0", "tavernHelper": null },
+  "requirements": [
+    { "id": "context", "owner": "sillytavern", "symbol": "SillyTavern.getContext", "required": true, "fallback": null },
+    { "id": "prompt", "owner": "sillytavern", "symbol": "SillyTavern.getContext().setExtensionPrompt", "required": true, "fallback": null },
+    { "id": "chat-save", "owner": "sillytavern", "symbol": "SillyTavern.getContext().saveMetadata", "required": true, "fallback": null },
+    { "id": "settings-save", "owner": "sillytavern", "symbol": "SillyTavern.getContext().saveSettingsDebounced", "required": true, "fallback": null },
+    { "id": "headers", "owner": "sillytavern", "symbol": "SillyTavern.getContext().getRequestHeaders", "required": true, "fallback": null },
+    { "id": "events", "owner": "sillytavern", "symbol": "SillyTavern.getContext().eventSource", "required": true, "fallback": null }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "sillytavern-butterfly",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "SillyTavern story continuity and source-backed canon comparisons",
+  "scripts": { "test": "node --experimental-vm-modules --test tests/*.test.mjs" },
+  "engines": { "node": ">=20" }
+}

@@ -1,0 +1,14 @@
+{
+  "display_name": "蝴蝶效应 · 世界线记录",
+  "author": "493945271w-create",
+  "version": "0.3.0",
+  "minimum_client_version": "1.18.0",
+  "loading_order": 30,
+  "js": "index.js",
+  "css": "style.css",
+  "generate_interceptor": "ButterflyContinuity_Intercept",
+  "dependencies": [],
+  "hooks": { "enable": "initialize", "disable": "dispose", "delete": "dispose", "clean": "dispose" },
+  "auto_update": false,
+  "homePage": "https://github.com/493945271w-create/sillytavern-butterfly"
+}
