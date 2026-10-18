@@ -19,3 +19,5 @@
 #butterfly-continuity-panel .bf-config input:not([type=checkbox]), #butterfly-continuity-panel .bf-config select { width:100%; padding:9px; border:1px solid #6e8d76; border-radius:6px; background:#14251b; color:#e7f1e7; font:inherit; }
 #butterfly-continuity-panel [data-form-status] { margin:12px 0; font-size:13px; overflow-wrap:anywhere; }
 #butterfly-continuity-panel .bf-config textarea { min-height:160px; }
+#butterfly-continuity-panel .bf-search-suggestions { width:100%; height:160px; border:0; background:white; margin-top:10px; }
+#butterfly-continuity-panel a { color:#b5dfc0; overflow-wrap:anywhere; }

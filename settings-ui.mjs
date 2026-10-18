@@ -1,12 +1,16 @@
 import { DEFAULT_SETTINGS, SETTINGS_KEY, readSettings, cleanSettings, normalizeBase, readKey, writeKey, listModels } from './api.mjs';
 import { prepareReferences } from './references.mjs';
+import { nativeResearch } from './native.mjs';
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 
 export function showSettings(panel, context, done) {
     const settings = readSettings(context), form = document.createElement('form');
     form.className = 'bf-editor bf-config'; form.dataset.editor = 'settings';
-    form.innerHTML = `<h3>独立模型设置</h3>
-      <p>分析使用 OpenAI 兼容的 Chat Completions 接口。聊天片段和参考资料会通过酒馆服务器发往你填写的地址，费用按该服务计费。</p>
+    form.innerHTML = `<h3>分析模型与原生搜索</h3>
+      <p>分析和原著搜索使用下面同一个模型、地址及密钥。正文仍用酒馆原来的模型。费用按所选服务计费。</p>
+      <label>接口类型<select name="provider"><option value="compatible">Chat Completions 兼容接口（手动资料）</option><option value="openai">OpenAI Responses（GPT 原生搜索）</option><option value="gemini">Gemini 原生接口（Google 搜索）</option></select></label>
+      <label><input name="search" type="checkbox">核对原著时使用所选模型的原生联网搜索</label>
+      <p data-connection-hint></p>
       <label>API 基础地址<input name="url" type="url" required placeholder="https://你的服务地址/v1" value="${escape(settings.url)}"></label>
       <label>API 密钥<input name="key" type="password" autocomplete="off" placeholder="无需密钥的本地服务可留空"></label>
       <p>密钥仅保存在本浏览器会话中，刷新可保留；关闭会话后可能需要重新填写。聊天导出文件不包含密钥。使用远程酒馆时请通过 HTTPS 或可信隧道访问。</p>
@@ -16,12 +20,35 @@ export function showSettings(panel, context, done) {
       <label>输出上限（tokens）<input name="maxTokens" type="number" min="512" max="32000" value="${settings.maxTokens}"></label>
       <label>输出上限字段<select name="tokenField"><option value="max_tokens">max_tokens（通常使用）</option><option value="max_completion_tokens">max_completion_tokens（部分推理模型）</option></select></label>
       <label>思考强度<select name="reasoning"><option value="">服务默认（不发送此参数）</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
-      <p>只有服务支持 reasoning_effort 时才选择思考强度。读取列表不生成内容；启用自动整理、预览和发送前筛选会调用所选模型。</p>
+      <p>思考强度仅在服务支持时选择；Gemini 使用服务默认值。读取模型列表不生成内容；“测试原生搜索”会向当前表单中的服务发出一次联网请求并产生该服务的费用。</p>
+      <button type="button" data-test-search>测试原生搜索</button><div data-search-result></div>
       <div role="status" data-form-status></div><div class="bf-toolbar"><button type="submit" class="bf-primary">保存设置</button><button type="button" data-cancel>返回</button></div>`;
     panel.replaceChildren(form);
     const field = name => form.elements.namedItem(name), note = message => { form.querySelector('[data-form-status]').textContent = message; };
     field('key').value = readKey(settings.url);
     field('reasoning').value = settings.reasoning; field('tokenField').value = settings.tokenField;
+    field('provider').value = settings.provider; field('search').checked = settings.search;
+    const syncProvider = () => {
+        const provider = field('provider').value, compatible = provider === 'compatible';
+        field('search').disabled = compatible;
+        if (compatible) field('search').checked = false;
+        field('tokenField').disabled = !compatible;
+        field('reasoning').disabled = provider === 'gemini';
+        form.querySelector('[data-test-search]').disabled = compatible;
+        form.querySelector('[data-connection-hint]').textContent = compatible
+            ? '此类型通过酒馆服务器调用普通对话接口，只核对手动资料。模型名字含 GPT 或 Gemini 也不会自动启用联网。'
+            : `此类型由当前浏览器直接请求${provider === 'openai' ? ' Responses；官方基础地址为 https://api.openai.com/v1' : ' Gemini；官方基础地址为 https://generativelanguage.googleapis.com/v1beta'}。可填写支持同一原生协议的反代，需允许浏览器跨域请求（CORS）。模型和服务都须支持原生搜索。`;
+    };
+    field('provider').addEventListener('change', () => {
+        // Suggest an official base only when the field is empty, never replace a user's gateway.
+        if (!field('url').value.trim()) {
+            field('url').value = ({openai:'https://api.openai.com/v1',gemini:'https://generativelanguage.googleapis.com/v1beta'})[field('provider').value] || '';
+            field('key').value = readKey(field('url').value);
+        }
+        field('search').checked = field('provider').value !== 'compatible';
+        syncProvider();
+    });
+    syncProvider();
     // A changed destination must never inherit the previously displayed key.
     field('url').addEventListener('input', () => { field('key').value = readKey(field('url').value); });
     const controller = new AbortController();
@@ -37,6 +64,18 @@ export function showSettings(panel, context, done) {
             note(`已读取 ${models.length} 个模型，请在“模型”输入框选择或手填。`); field('model').focus();
         } catch (error) { if (form.isConnected) note(error.message); } finally { button.disabled = false; }
     };
+    form.querySelector('[data-test-search]').onclick = async event => {
+        const button = event.currentTarget; button.disabled = true; note('正在请求原生搜索并检查来源…');
+        const output = form.querySelector('[data-search-result]'); output.replaceChildren();
+        try {
+            const config = cleanSettings(values());
+            const result = await nativeResearch(config, field('key').value.trim(), ['富士山的海拔是多少？请联网查询官方资料。'], { signal: controller.signal });
+            if (!form.isConnected || controller.signal.aborted) return;
+            renderResearch(output, result.searches, result.sources);
+            note(`本次原生搜索成功，收到 ${result.sources.length} 个带引用来源。设置尚未保存，请点击“保存设置”。`);
+        } catch (error) { if (form.isConnected) note(error.message); }
+        finally { if (form.isConnected) syncProvider(); }
+    };
     form.onsubmit = event => {
         event.preventDefault();
         try {
@@ -48,6 +87,39 @@ export function showSettings(panel, context, done) {
         } catch (error) { note(error.message); }
     };
     field('url').focus();
+}
+
+export function renderResearch(container, searches = [], sources = []) {
+    for (const search of searches) {
+        const details = document.createElement('details');
+        const summary = document.createElement('summary');
+        summary.textContent = `${search.provider === 'gemini' ? 'Gemini Google 搜索' : 'GPT web_search'} · ${search.model} · ${search.retrievedAt}`;
+        details.append(summary);
+        const question = document.createElement('p');
+        question.textContent = `核对问题：${(search.requestedQueries || []).join('；')}`; details.append(question);
+        const ids = new Set(search.sourceIds || []);
+        for (const source of sources.filter(s => ids.has(s.id))) {
+            const block = document.createElement('blockquote');
+            block.textContent = source.text;
+            const link = document.createElement('a');
+            // Imported metadata is data, never an executable URL.
+            const url = safeLink(source.url);
+            if (url) { link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = `来源：${source.title}`; block.append(document.createElement('br'), link); }
+            details.append(block);
+        }
+        if (search.provider === 'gemini' && typeof search.entryPoint === 'string' && search.entryPoint) {
+            const frame = document.createElement('iframe');
+            frame.title = 'Google 搜索建议'; frame.className = 'bf-search-suggestions';
+            frame.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox');
+            frame.referrerPolicy = 'no-referrer';
+            frame.srcdoc = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src https: data:"><base target="_blank">${search.entryPoint}`;
+            details.append(frame);
+        }
+        container.append(details);
+    }
+}
+function safeLink(value) {
+    try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.href : ''; } catch { return ''; }
 }
 
 export function showReferences(panel, entries, save, done) {

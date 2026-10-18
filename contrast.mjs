@@ -1,4 +1,4 @@
-import { buildPrompt, recordPromptParts, validateCanon, canonScope } from './core.mjs?v=0.3.0';
+import { buildPrompt, recordPromptParts, validateCanon, canonScope } from './core.mjs?v=0.4.0';
 
 const s = { type: 'string' };
 export const PREMISE_LIMIT = 700;
@@ -16,7 +16,7 @@ export const contrastInstructions = `你负责为同人正文整理“当前世�
 候选仅含已经核实的重大原著分歧。先读最新输入和近期场景，判断本轮最容易误套哪些原著前提，再选择相关记录并按同一 divergenceKey 归组。参考因果、代词、别名与仍有效的关系，不依赖名字匹配和新旧排序。以候选 changedPremise 说明的具体变化为起点，合并同一分歧的发展，不再从聊天里添加新的日常条目；普通地点、一次练习和日常对白不因出场就单列蝴蝶效应。无相关差异时 groups 可为空。用户 locked 的记录优先保留。
 每组必须围绕一个实际变化讲清楚：原著情况、当前剧情、已经改变的前提。当前剧情以候选 evidence 为依据；content 只是它们的排版。用 current 归纳为 1–3 句，每句 evidence 引用对应 recordId 的连续原文；多条记录共同支持一句时各引必要片段。state=established 只用于明确已发生事实；计划、愿望、约定尚未实现的部分用 plan；猜测、条件、转述或不确定用 uncertain。承诺不等于履行，提议婚礼不等于已婚。不要用最新输入的愿望补造已发生事件。人工修正优先；保留否定、时点、说话主体和变化过程。
 canonRecordIds 仅填本组 current 引用记录中已有 verified canon 的编号；这些原著结论将由程序原样发送，不需要重新查相同事实。禁止用一个人物的对照替另一个事件背书，禁止用近期聊天或你对作品的印象代替原著。
-缺少原著对照时，只能阅读本次提供的 sources 资料。没有联网或数据库工具，禁止声称执行过查询。source 的 kind 区分 novel 原著片段、wiki 百科、timeline 时间线和 reference 其他参考；保留版本、阶段和说话人。查不到对应资料时留待核实，不能靠作品印象编造事件，也不能把未提供资料说成原作没有。
+缺少原著对照时，只能阅读本次提供的 sources 资料。当前归组调用不启用搜索工具，禁止声称另做了查询。已有原著对照可能来自带来源的原生联网摘要，需保留该核对范围。source 的 kind 区分 novel 原著片段、wiki 百科、timeline 时间线和 reference 其他参考；保留版本、阶段和说话人。查不到对应资料时留待核实，不能靠作品印象编造事件，也不能把未提供资料说成原作没有。
 补充结论填 lookup.canon（最多700字），lookup.canonEvidence 给出 sourceId 和对应资料中连续逐字引文（每条8–500字、最多6条）。有真实引文只说明引用存在，不证明推论一定正确；整个结论必须受到引文和上下文支持。资料冲突写入 canonConflict，canon 留空。wikiQuery 留空，wikiOutcome 用 unreviewed（有明确 Wiki 冲突时可用 conflicts）。无依据时 canon 留空，用 canonQuery 简述缺口。
 changedPremises 必须是字符串，用 1–3 句、最多700字符说明这项当前事实改变了哪些原著事件的成立条件，以及当前场景应承接什么。它是基于已核实两侧事实的有限推论，不是新的既成事件，也不是替用户决定未来走向。有已核实对照时优先给出具体差异；没有已核实的原著对照或无法可靠归纳影响时留空字符串，不编造差异。程序会保留事实对照并标明差异说明尚未完成。不要每组重复总说明，不给无关旧记忆凑字数。
 优先按当前场景的重要性排列 groups。不设条数目标，不为凑数添加无关分歧；全部可见输出约预算 budget 字符，预留 200 字符说明。current 每句最多700字，title最多100字，changedPremises最多700字。输出指定 JSON。normal/regenerate/swipe 为新回复选择，continue 为继续当前回复选择。`;
@@ -80,7 +80,7 @@ export function validateContrast(result,input,known=new Map(),opened=new Set(),s
         if(canonRecordIds.some(id=>!ids.has(id)||!records.get(id)?.canon.verified||!records.get(id).canon.text))throw Error('原著对照未核实或不属于本组变化');
         const stored=canonRecordIds.map(id=>records.get(id).canon);
         const fresh=validateCanon(g.lookup||{},known,opened,searches);
-        const checked=fresh.canonStatus === 'provided_supported';
+        const checked=['provided_supported','web_supported'].includes(fresh.canonStatus);
         // A conflict or incomplete extra claim cannot borrow a stored claim's verification.
         const pendingLookup=!!(g.lookup?.canon||g.lookup?.canonQuery||g.lookup?.canonConflict)&&!checked;
         const verified=(stored.length>0||checked)&&!pendingLookup;

@@ -1,4 +1,5 @@
-export const VERSION = '0.3.0';
+import { safeWebUrl } from './native.mjs';
+export const VERSION = '0.4.0';
 export const KEY = 'butterfly_continuity_v1';
 export const DIVERGENCE_POLICY_VERSION = 1;
 export function isMajorCandidate(record) {
@@ -123,17 +124,19 @@ export function validateCanon(e, knownSources = new Map(), openedSources = new S
     if (!Array.isArray(proofs) || proofs.length > 6) throw Error('参考资料引文格式不正确。');
     const canonEvidence = proofs.flatMap(p => {
         const source = knownSources.get(p.sourceId);
-        if (!source?.provided || !openedSources.has(p.sourceId) || typeof p.quote !== 'string' || p.quote.trim().length < 8 || p.quote.length > 500 || !source.text?.includes(p.quote.trim())) return [];
-        return [{ sourceId: p.sourceId, quote: p.quote.trim(), kind: source.kind, title: source.title }];
+        const web = source?.origin === 'native_search' && source.kind === 'web_summary' && source.grounded === true && safeWebUrl(source.url);
+        if (!(source?.provided || web) || !openedSources.has(p.sourceId) || typeof p.quote !== 'string' || p.quote.trim().length < 8 || p.quote.length > 500 || !source.text?.includes(p.quote.trim())) return [];
+        return [{ sourceId: p.sourceId, quote: p.quote.trim(), kind: source.kind, title: source.title, ...(web ? { url: source.url, provider: source.provider } : {}) }];
     });
     const hasClaim = !!(requested || canonQuery || canonConflict);
     const conflict = canonConflict || (e.wikiOutcome === 'conflicts' && canonEvidence.some(p => p.kind === 'wiki'));
-    const canonStatus = conflict ? 'conflict' : requested && canonEvidence.length ? 'provided_supported' : hasClaim ? 'pending' : 'none';
-    return { canon: canonStatus === 'provided_supported' ? requested : '', canonQuery, canonEvidence, canonStatus, canonPolicyVersion: 3,
+    const canonStatus = conflict ? 'conflict' : requested && canonEvidence.length ? canonEvidence.some(p => p.kind === 'web_summary') ? 'web_supported' : 'provided_supported' : hasClaim ? 'pending' : 'none';
+    return { canon: ['provided_supported', 'web_supported'].includes(canonStatus) ? requested : '', canonQuery, canonEvidence, canonStatus, canonPolicyVersion: 3,
         wikiQuery: '', wikiNote: '', wikiCheck: { state: 'not_searched', readSourceIds: [] }, canonConflict,
         canonSourceIds: [...new Set(canonEvidence.map(p => p.sourceId))] };
 }
 export function canonScope(record) {
+    if (record.canonEvidence?.some(p => p.kind === 'web_summary')) return '原生联网摘要有来源支持；摘要不是网页或小说逐字原文，仍须核对版本与语境';
     const labels = { novel: '原著片段', wiki: 'Wiki', timeline: '时间线', reference: '参考设定' };
     const kinds = [...new Set((record.canonEvidence || []).map(p => labels[p.kind] || '参考资料'))];
     return `使用者提供的${kinds.join('、')}有对应引文；未联网核验`;
@@ -146,7 +149,7 @@ export function makeBatch(result, { start, end, hash, sources = [], searches = [
 const xml = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('{{', '｛｛').replaceAll('}}', '｝｝');
 function canonComparison(record) {
     const proofs = record.canonEvidence || [];
-    const verified = record.canonPolicyVersion === 3 && record.canonStatus === 'provided_supported' && record.canon && proofs.length > 0;
+    const verified = record.canonPolicyVersion === 3 && ['provided_supported', 'web_supported'].includes(record.canonStatus) && record.canon && proofs.length > 0;
     const floors = [...new Set((record.evidence || []).map(p => `#${p.messageId}`))].join('、');
     const binding = record.manuallyEdited ? `对应 ${floors} 的人工修正` : `对应聊天摘录 ${floors}`;
     if (verified) return { checked: true, text: `【原著对照 · ${binding}】\n${canonScope(record)}：${xml(record.canon)}\n与上述当前剧情对比识别差异，当前剧情和人工修正优先；后续影响仍须根据实际事件判断。` };

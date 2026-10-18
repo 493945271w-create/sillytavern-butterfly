@@ -1,5 +1,5 @@
 import { prepareReferences } from './references.mjs';
-import { candidateRecord, cleanCandidate, contrastSchema, contrastInstructions, validateContrast, buildContrastPrompt, buildContrastFallback } from './contrast.mjs?v=0.3.0';
+import { candidateRecord, cleanCandidate, contrastSchema, contrastInstructions, validateContrast, buildContrastPrompt, buildContrastFallback } from './contrast.mjs?v=0.4.0';
 export const SELECTION_BUDGET = 6500;
 export const selectionSchema = contrastSchema;
 export const selectionInstructions = contrastInstructions;

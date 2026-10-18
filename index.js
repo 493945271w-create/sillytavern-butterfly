@@ -1,9 +1,10 @@
-import { KEY, VERSION, emptyLedger, fingerprints, hasLegacyAnchors, migrateLegacyAnchors, project, validateAnalysis, makeBatch, analysisWindow, isMajorCandidate, isVerifiedDivergence } from './core.mjs?v=0.3.0';
-import { SelectionGate, selectionAborted, selectionSceneChanged } from './selection.mjs?v=0.3.0';
+import { KEY, VERSION, emptyLedger, fingerprints, hasLegacyAnchors, migrateLegacyAnchors, project, validateAnalysis, makeBatch, analysisWindow, isMajorCandidate, isVerifiedDivergence } from './core.mjs?v=0.4.0';
+import { SelectionGate, selectionAborted, selectionSceneChanged } from './selection.mjs?v=0.4.0';
 import { requestAnalysis, requestSelection } from './requests.mjs';
 import { readSettings } from './api.mjs';
 import { prepareReferences } from './references.mjs';
-import { showSettings, showReferences } from './settings-ui.mjs';
+import { showSettings, showReferences, renderResearch } from './settings-ui.mjs';
+import { safeWebUrl } from './native.mjs';
 
 const context = () => SillyTavern.getContext();
 const owner = () => { const c = context(); return c.chatId ? `${c.groupId ?? c.characters[c.characterId]?.avatar ?? c.characterId}:${c.chatId}` : ''; };
@@ -91,7 +92,7 @@ async function analyze() {
         const anchor = hashes[window.end];
         const existing = view.records.filter(isMajorCandidate).map(({ id, title, fact, locked, supersededBy, evidence, manuallyEdited, divergenceKey, changedPremise, canon, canonStatus }) => ({ id, title, fact, locked, supersededBy, evidence, manuallyEdited, divergenceKey, changedPremise, canon, canonStatus }));
         setStatus(`正在整理第 ${window.start + 1}–${window.end + 1} 条消息…`); render();
-        const result = await requestAnalysis({ messages: window.messages, existing, sources: prepareReferences(ledger().references || []) }, signal, context());
+        const result = await requestAnalysis({ messages: window.messages, existing, sources: prepareReferences(ledger().references || []) }, signal, context(), { progress: setStatus });
         if (signal.aborted || owner() !== current) throw new Error('聊天已切换或分析已取消，本次未保存。');
         const now = await fingerprints(context().chat);
         if (now[window.end] !== anchor) throw new Error('剧情在分析期间发生变化，请重新整理。');
@@ -99,7 +100,7 @@ async function analyze() {
         const clean = validateAnalysis(result, window.messages, existing, new Map(sources.map(s => [s.id, s])), new Set(sources.filter(s => s.opened).map(s => s.id)), result.searches || []);
         const data = structuredClone(ledger());
         const usedSourceIds = new Set(clean.events.flatMap(event => event.canonSourceIds));
-        data.batches.push(makeBatch(clean, { ...window, hash: anchor, sources: sources.filter(source => usedSourceIds.has(source.id)), searches: [] }));
+        data.batches.push(makeBatch(clean, { ...window, hash: anchor, sources: sources.filter(source => source.origin === 'native_search' || usedSourceIds.has(source.id)), searches: result.searches || [] }));
         await persist(data, current);
         const ready = clean.events.filter(isVerifiedDivergence).length;
         setStatus(`已记录 ${ready} 条重大原著分歧，${clean.events.length-ready} 条待核实；整理到第 ${window.end + 1} 条消息。`);
@@ -113,7 +114,7 @@ function pendingQuestions(r) {
 function recordMarkup(r) {
     const byId = new Map(view.records.map(x => [x.id, x.title]));
     const sourceBatch = view.batches.find(b => b.id === r.batchId);
-    const sourceTitles = (sourceBatch?.sources || []).filter(s => r.canonSourceIds.includes(s.id)).map(s => s.title);
+    const sourceTitles = (sourceBatch?.sources || []).filter(s => r.canonSourceIds.includes(s.id)).map(s => safeWebUrl(s.url) ? `<a href="${html(safeWebUrl(s.url))}" target="_blank" rel="noopener noreferrer">${html(s.title)}</a>` : html(s.title));
     return `<article class="bf-card" data-record="${html(r.id)}">
       <div class="bf-card-top"><span class="bf-tag">${r.supersededBy ? '历史分歧 · 已更新' : isVerifiedDivergence(r) ? '重大原著分歧' : '待核实 · 不发送'}${r.locked ? ' · 已锁定' : ''}</span><span>${r.evidence.map(e => `#${e.messageId}`).join(' · ')}</span></div>
       <h3>${html(r.title)}</h3><small>${r.manuallyEdited ? '当前剧情 · 人工修正' : '当前剧情 · 依据见下方'}</small><p class="bf-fact">${html(r.fact)}</p>
@@ -123,10 +124,10 @@ function recordMarkup(r) {
       ${r.constraint ? `<div class="bf-rule"><span>承接边界</span><p>${html(r.constraint)}</p></div>` : ''}
       <div class="bf-entities">${r.entities.map(e => `<span>${html(e)}</span>`).join('')}</div>
       <details><summary>依据与原著对照</summary>${r.evidence.map(e => `<blockquote>#${e.messageId} ${html(e.quote)}</blockquote>`).join('')}
-      <p>${html(({ provided_supported: '所提供资料有对应引文（未联网核验，请留意版本与语境）', cross_checked: '小说与Wiki均有引用支持（仍须留意语境与版本）', novel_only: '两边已查：仅小说有支持，Wiki未提供相关依据', reference_only: '只有百科或时间线参考，缺小说依据', conflict: '来源冲突 · 待核实', pending: '参考资料不足 · 待核实', none: '未作原著对照' })[r.canonStatus] || '原著对照待核实')}：${html(r.canon || r.canonQuery || '当前记录来自聊天摘录。')}</p>
+      <p>${html(({ provided_supported: '所提供资料有对应引文（未联网核验，请留意版本与语境）', web_supported: '原生联网摘要有来源支持（摘要不是小说逐字原文，请核对版本与语境）', cross_checked: '小说与Wiki均有引用支持（仍须留意语境与版本）', novel_only: '两边已查：仅小说有支持，Wiki未提供相关依据', reference_only: '只有百科或时间线参考，缺小说依据', conflict: '来源冲突 · 待核实', pending: '参考资料不足 · 待核实', none: '未作原著对照' })[r.canonStatus] || '原著对照待核实')}：${html(r.canon || r.canonQuery || '当前记录来自聊天摘录。')}</p>
       ${r.wikiQuery ? `<p>待核对：${html(r.wikiQuery)}<br>${html(r.wikiNote || '尚未完成阅读与判断。')}</p>` : ''}
       ${r.canonConflict ? `<p>来源差异：${html(r.canonConflict)}</p>` : ''}
-      ${(r.canonEvidence || []).map(p => `<blockquote>${html(p.title)}<br>${html(p.quote)}</blockquote>`).join('')}${sourceTitles.length ? `<small>参考来源：${html(sourceTitles.join(' / '))}</small>` : ''}</details>
+      ${(r.canonEvidence || []).map(p => `<blockquote>${html(p.title)}<br>${html(p.quote)}</blockquote>`).join('')}${sourceTitles.length ? `<small>参考来源：${sourceTitles.join(' / ')}</small>` : ''}</details>
       ${pendingQuestions(r).length ? `<details><summary>待核实 · ${pendingQuestions(r).length}</summary><ul>${pendingQuestions(r).map(q => `<li>${html(q)}</li>`).join('')}</ul></details>` : ''}
       <div class="bf-card-actions"><button data-action="edit" data-id="${html(r.id)}">修正</button><button data-action="lock" data-id="${html(r.id)}">${r.locked ? '解除锁定' : '锁定并优先提醒'}</button><button data-action="dismiss" data-id="${html(r.id)}">撤下</button></div>
     </article>`;
@@ -141,7 +142,7 @@ function render() {
     const legacy = view.records.filter(r => !r.supersededBy && !isMajorCandidate(r));
     const history = view.records.filter(r => r.supersededBy && isMajorCandidate(r));
     panel.innerHTML = `<header class="bf-header"><div><div class="bf-eyebrow">世界线记录</div><h2>蝴蝶效应 <small>试用版 ${VERSION}</small></h2></div><button class="bf-close" data-action="close" aria-label="关闭蝴蝶效应">×</button></header>
-      <p class="bf-intro">只记录与原著有重大区别的已确立变化，用你提供的参考资料核对；发送前由所选模型判断本轮需要哪些分歧。</p>
+      <p class="bf-intro">只记录与原著有重大区别的已确立变化。${readSettings(context()).search ? '已启用所选模型的原生搜索，遇到原著问题时查证；结果以返回的搜索来源为准。' : '当前未启用联网，只核对手动资料；可在“模型设置”选择原生接口并启用搜索。'}发送前由所选模型判断本轮需要哪些分歧。</p>
       
       <div class="bf-chat">${html(context().chatId || '尚未选择聊天')}</div>
       <div class="bf-toolbar"><button data-action="settings">模型设置</button><button data-action="references" ${!current ? 'disabled' : ''}>参考资料 · ${(data.references || []).length}</button><button class="bf-primary" data-action="${data.enabled ? 'analyze' : 'enable'}" ${!current || task ? 'disabled' : ''}>${data.enabled ? '整理接下来的剧情' : '启用当前聊天'}</button>
@@ -155,13 +156,20 @@ function render() {
       ${view.batches.at(-1)?.notes?.length ? `<details><summary>本次整理说明</summary><ul>${view.batches.at(-1).notes.map(n => `<li>${html(n)}</li>`).join('')}</ul></details>` : ''}
       <div class="bf-stats"><div><b>${ready.length}</b><span>重大原著分歧</span></div><div><b>${pending.length}</b><span>待核实 · 不发送</span></div><div><b>${view.end < 0 ? '—' : '#' + view.end}</b><span>已整理至</span></div></div>
       <p class="bf-hint">首次从最近 8 条消息开始，之后按长度分批接着整理，每批最多 8 条，正文不截断。${data.inject ? '当前已开启写作约束。' : '当前为预览模式，写作约束尚未加入生成。'}${view.invalid ? ` 有 ${view.invalid} 次历史整理因剧情变化或撤销而停用，原记录仍保留。` : ''}</p>
-      <details class="bf-preview"><summary>下一轮发送预览 · ${selectionMode === 'model' ? '模型已整理' : selectionMode === 'fallback' ? '已有依据的简要对照' : selectionMode === 'empty' ? '没有有效记录' : selectionMode === 'unavailable' ? '本轮未加入' : '待模型判断'} · ${preview.groupCount || 0} 组 · ${preview.verifiedGroupCount || 0} 组有资料引文</summary><pre>${html(preview.text || (selectionMode === 'pending' ? '生成前会让模型按事件归组，整理原著情况、当前剧情和改变的前提；也可点击上方按钮预览。' : selectionMode === 'unavailable' ? '本轮资料未完成，未加入正文。' : '本轮没有需要发送的记录。'))}</pre><small>模型 按变化事件合并记录，区分已发生、计划和未确定事项，并说明与原著不同的前提。已有对照直接采用，缺口仅在你提供的参考资料中核对；未核实的差异不下结论。每组保留聊天楼层依据，锁定优先，整组按 6500 字符预算发送。整理失败会提示并使用已有依据的简要对照。</small></details>
+      <details class="bf-preview"><summary>下一轮发送预览 · ${selectionMode === 'model' ? '模型已整理' : selectionMode === 'fallback' ? '已有依据的简要对照' : selectionMode === 'empty' ? '没有有效记录' : selectionMode === 'unavailable' ? '本轮未加入' : '待模型判断'} · ${preview.groupCount || 0} 组 · ${preview.verifiedGroupCount || 0} 组有资料引文</summary><pre>${html(preview.text || (selectionMode === 'pending' ? '生成前会让模型按事件归组，整理原著情况、当前剧情和改变的前提；也可点击上方按钮预览。' : selectionMode === 'unavailable' ? '本轮资料未完成，未加入正文。' : '本轮没有需要发送的记录。'))}</pre><small>模型 按变化事件合并记录，区分已发生、计划和未确定事项，并说明与原著不同的前提。已有对照直接采用，缺口在已提供的资料中核对，整理剧情时可启用原生联网补充来源；未核实的差异不下结论。每组保留聊天楼层依据，锁定优先，整组按 6500 字符预算发送。整理失败会提示并使用已有依据的简要对照。</small></details>
+      <details><summary>联网核对记录与来源</summary><div data-research-history></div></details>
       <main class="bf-records">${ready.length ? [...ready].reverse().map(recordMarkup).join('') : '<div class="bf-empty"><div>当前没有已核实的重大原著分歧。</div><p>日常回合没有新条目是正常情况。</p></div>'}</main>
       ${pending.length ? `<details><summary>待核实的重大分歧 · ${pending.length} 条 · 不发送</summary>${pending.map(recordMarkup).join('')}</details>` : ''}
       ${history.length ? `<details><summary>已更新的历史分歧 · ${history.length} 条</summary>${history.map(recordMarkup).join('')}</details>` : ''}
       ${legacy.length ? `<details><summary>旧标准记录 · ${legacy.length} 条 · 暂不发送</summary><p>这些记录尚未通过重大原著分歧筛选。原内容仍在导出记录中。</p></details>` : ''}
       ${view.dismissedRecords?.length ? `<details><summary>已撤下 · ${view.dismissedRecords.length}</summary>${view.dismissedRecords.map(r => `<p>${html(r.title)} <button data-action="restore" data-id="${html(r.id)}">恢复记录</button></p>`).join('')}</details>` : ''}
       ${view.batches.length ? `<footer><button data-action="undo">撤销最近一次整理</button><span>原始聊天和旧表保留。</span></footer>` : ''}`;
+    const historyNode = panel.querySelector('[data-research-history]');
+    if (historyNode) {
+        const batches = view.batches.filter(b => b.searches?.length).slice(-10);
+        if (!batches.length) historyNode.textContent = '当前聊天尚无已保存的原生搜索记录。';
+        for (const batch of batches.reverse()) renderResearch(historyNode, batch.searches, batch.sources);
+    }
 }
 async function show() {
     if (!panel.open) panel.showModal();
